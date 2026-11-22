@@ -1,0 +1,297 @@
+"""
+RESQ 4.0 Central Orchestration & Safety Engine
+The authoritative controller enforcing state transitions, authorization policies,
+safety constraints, failure continuity, and human-in-the-loop governance.
+"""
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+
+from backend.models.incident import (
+    IncidentRecord,
+    TimelineEvent,
+    FieldProvenance,
+    ProvenanceHistory,
+    CoordinationAction
+)
+from backend.models.enums import (
+    IncidentState,
+    VerificationStatus,
+    ProvenanceSource,
+    ActionStatus,
+    ConnectionState,
+    UrgencyLevel,
+    IncidentCategory
+)
+from backend.core.persistence import db_engine
+from backend.core.idempotency import idempotency_mgr
+
+# Valid allowed state transitions
+VALID_TRANSITIONS: Dict[IncidentState, List[IncidentState]] = {
+    IncidentState.RECEIVED: [IncidentState.INFORMATION_GATHERING, IncidentState.OPERATOR_REVIEW],
+    IncidentState.INFORMATION_GATHERING: [IncidentState.VALIDATION, IncidentState.OPERATOR_REVIEW],
+    IncidentState.VALIDATION: [IncidentState.OPERATOR_REVIEW, IncidentState.ESCALATION_PENDING],
+    IncidentState.OPERATOR_REVIEW: [IncidentState.ESCALATION_PENDING, IncidentState.ESCALATION_SENT, IncidentState.RESOLUTION_REVIEW, IncidentState.CLOSED],
+    IncidentState.ESCALATION_PENDING: [IncidentState.ESCALATION_SENT, IncidentState.OPERATOR_REVIEW],
+    IncidentState.ESCALATION_SENT: [IncidentState.ACKNOWLEDGED, IncidentState.OPERATOR_REVIEW],
+    IncidentState.ACKNOWLEDGED: [IncidentState.ASSIGNED, IncidentState.ACTIVE_MONITORING],
+    IncidentState.ASSIGNED: [IncidentState.ACTIVE_MONITORING, IncidentState.RESOLUTION_REVIEW],
+    IncidentState.ACTIVE_MONITORING: [IncidentState.RESOLUTION_REVIEW, IncidentState.OPERATOR_REVIEW],
+    IncidentState.RESOLUTION_REVIEW: [IncidentState.CLOSED, IncidentState.ACTIVE_MONITORING],
+    IncidentState.CLOSED: [IncidentState.OPERATOR_REVIEW] # Allow reopening
+}
+
+class OrchestrationEngine:
+    def create_incident(self, category_str: str = "Road Accident", language: str = "en") -> IncidentRecord:
+        matched_category = IncidentCategory.ROAD_ACCIDENT
+        for cat in IncidentCategory:
+            if cat.value.lower() == category_str.lower() or cat.name.lower() == category_str.lower():
+                matched_category = cat
+                break
+        incident = IncidentRecord(category=matched_category, language=language)
+        incident = db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident.incident_id,
+            event_type="INTAKE_INITIATED",
+            actor="Central Orchestration Engine",
+            summary=f"New emergency incident initialized with ID: {incident.incident_id}",
+            details={"language": language, "initial_state": incident.state.value}
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def transition_state(self, incident_id: str, new_state: IncidentState, actor: str, reason: str) -> IncidentRecord:
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        current_state = incident.state
+        allowed_targets = VALID_TRANSITIONS.get(current_state, [])
+        
+        if new_state not in allowed_targets and new_state != current_state:
+            raise ValueError(f"Illegal state transition from {current_state.value} to {new_state.value}. Allowed: {[s.value for s in allowed_targets]}")
+        
+        incident.state = new_state
+        incident.updated_at = datetime.utcnow().isoformat()
+        db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="STATE_CHANGE",
+            actor=actor,
+            summary=f"Incident state transitioned from {current_state.value} to {new_state.value}",
+            details={"from_state": current_state.value, "to_state": new_state.value, "reason": reason}
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def handle_caller_disconnection(self, incident_id: str, reason: str = "Abrupt line termination detected") -> IncidentRecord:
+        """
+        Core Innovation: A communication failure is an incident event, NEVER an incident termination.
+        Persists available data, marks interruption, alerts human operator.
+        """
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        incident.connection_state = ConnectionState.DISCONNECTED
+        
+        # Check if incident location is still uncertain or missing
+        if incident.locations.incident_location.verification_status in [VerificationStatus.MISSING, VerificationStatus.UNCERTAIN]:
+            incident.reasoning.missing_critical_fields.append("Exact Incident Location (Call Interrupted)")
+            
+        incident.reasoning.operator_action_recommendations.append("URGENT: Caller disconnected prematurely. Operator review and cross-referencing required.")
+        
+        # Safely transition to OPERATOR_REVIEW so human operator has immediate review control
+        if incident.state in [IncidentState.RECEIVED, IncidentState.INFORMATION_GATHERING, IncidentState.VALIDATION, IncidentState.ESCALATION_PENDING]:
+            incident.state = IncidentState.OPERATOR_REVIEW
+            
+        db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="COMMUNICATION_INTERRUPTION",
+            actor="Continuity Engine (Disconnection Handler)",
+            summary="Caller disconnected. State persisted; incomplete intake flagged for Operator Review.",
+            details={"reason": reason, "missing_fields": incident.reasoning.missing_critical_fields},
+            is_failure_event=True
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def handle_ai_service_failure(self, incident_id: str, agent_name: str, error_msg: str) -> IncidentRecord:
+        """
+        Gracefully absorbs AI timeouts or crashes without terminating incident.
+        """
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        incident.reasoning.uncertain_fields.append(f"AI Service Failure ({agent_name})")
+        incident.reasoning.operator_action_recommendations.append(f"Manual operator verification needed due to {agent_name} failure.")
+        incident.state = IncidentState.OPERATOR_REVIEW
+        db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="AI_SERVICE_FAILURE",
+            actor="Continuity Engine (Agent Watchdog)",
+            summary=f"{agent_name} encountered an error: {error_msg}. Preserving record and escalating to Operator.",
+            details={"agent": agent_name, "error": error_msg},
+            is_failure_event=True
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def operator_override_field(
+        self,
+        incident_id: str,
+        field_name: str,
+        new_value: Any,
+        reason: str,
+        operator_id: str = "Operator-1"
+    ) -> IncidentRecord:
+        """
+        Allows human operator to correct or verify extracted information with full audit provenance.
+        """
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        now = datetime.utcnow().isoformat()
+        
+        if field_name in incident.fields:
+            existing = incident.fields[field_name]
+            # Record in history
+            existing.history.append(ProvenanceHistory(
+                timestamp=now,
+                previous_value=existing.current_value,
+                updated_by=operator_id,
+                reason=reason
+            ))
+            existing.current_value = new_value
+            existing.source = ProvenanceSource.OPERATOR_OVERRIDE
+            existing.verification_status = VerificationStatus.INDEPENDENTLY_VERIFIED
+            existing.confidence = 1.0
+        else:
+            # New field entered by operator
+            incident.fields[field_name] = FieldProvenance(
+                field_name=field_name,
+                current_value=new_value,
+                original_value=None,
+                source=ProvenanceSource.OPERATOR_OVERRIDE,
+                timestamp=now,
+                confidence=1.0,
+                verification_status=VerificationStatus.INDEPENDENTLY_VERIFIED,
+                extraction_method=f"Direct Operator Verification ({operator_id})"
+            )
+            
+        incident.updated_at = now
+        db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="OPERATOR_FIELD_OVERRIDE",
+            actor=operator_id,
+            summary=f"Operator verified/overrode '{field_name}' to '{new_value}'",
+            details={"field": field_name, "new_value": new_value, "reason": reason}
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def operator_acknowledge(self, incident_id: str, operator_id: str = "Operator-1") -> IncidentRecord:
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        incident.operator_acknowledged = True
+        incident.assigned_operator = operator_id
+        if incident.state == IncidentState.RECEIVED or incident.state == IncidentState.VALIDATION:
+            incident.state = IncidentState.OPERATOR_REVIEW
+            
+        db_engine.save_incident(incident)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="OPERATOR_ACKNOWLEDGED",
+            actor=operator_id,
+            summary=f"Incident acknowledged and assigned to {operator_id}",
+            details={"operator_id": operator_id}
+        )
+        db_engine.log_event(evt)
+        return incident
+
+    def operator_approve_action(self, incident_id: str, action_id: str, operator_id: str = "Operator-1") -> CoordinationAction:
+        """
+        Enforces human authorization for consequential coordination actions.
+        """
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        target_action = None
+        for act in incident.coordination_actions:
+            if act.action_id == action_id:
+                target_action = act
+                break
+                
+        if not target_action:
+            raise ValueError(f"Action {action_id} not found on incident {incident_id}")
+            
+        now = datetime.utcnow().isoformat()
+        target_action.operator_approved = True
+        target_action.operator_id = operator_id
+        target_action.status = ActionStatus.SENT
+        target_action.transmitted_at = now
+        
+        # Advance incident state to ESCALATION_SENT if appropriate
+        incident.state = IncidentState.ESCALATION_SENT
+        db_engine.save_incident(incident)
+        db_engine.save_action(target_action)
+        
+        evt = TimelineEvent(
+            incident_id=incident_id,
+            event_type="COORDINATION_APPROVED",
+            actor=operator_id,
+            summary=f"Operator approved dispatch of '{target_action.action_type}' to '{target_action.target_agency}'",
+            details={
+                "action_id": target_action.action_id,
+                "agency": target_action.target_agency,
+                "transmitted_at": now
+            }
+        )
+        db_engine.log_event(evt)
+        return target_action
+
+    def simulate_agency_acknowledgment(self, incident_id: str, action_id: str, responder_ref: str = "DISPATCH-UNIT-704") -> CoordinationAction:
+        """
+        Simulates agency response lifecycle: SENT -> ACKNOWLEDGED -> ASSIGNED
+        """
+        incident = db_engine.get_incident(incident_id)
+        if not incident:
+            raise ValueError(f"Incident {incident_id} not found")
+        
+        for act in incident.coordination_actions:
+            if act.action_id == action_id:
+                now = datetime.utcnow().isoformat()
+                act.status = ActionStatus.ACKNOWLEDGED
+                act.acknowledged_at = now
+                act.acknowledgment_reference = responder_ref
+                
+                incident.state = IncidentState.ACKNOWLEDGED
+                db_engine.save_incident(incident)
+                db_engine.save_action(act)
+                
+                evt = TimelineEvent(
+                    incident_id=incident_id,
+                    event_type="AGENCY_ACKNOWLEDGED",
+                    actor=act.target_agency,
+                    summary=f"Agency '{act.target_agency}' acknowledged dispatch with ref: {responder_ref}",
+                    details={"action_id": action_id, "ref": responder_ref}
+                )
+                db_engine.log_event(evt)
+                return act
+                
+        raise ValueError(f"Action {action_id} not found")
+
+orchestrator = OrchestrationEngine()

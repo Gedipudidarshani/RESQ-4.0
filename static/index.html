@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RESQ 4.0 | Failure-Aware Agentic Emergency Intelligence Platform</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="min-h-screen flex flex-col bg-[#070b14] text-slate-100">
+
+    <!-- Top Command Header -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-50 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-700 flex items-center justify-center shadow-lg shadow-cyan-500/25">
+                <i class="fas fa-shield-halved text-white text-xl"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-xl font-extrabold tracking-tight text-white">RESQ <span class="text-cyan-400">4.0</span></h1>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950 border border-cyan-800 text-cyan-400 font-mono">CONTINUITY ENGINE</span>
+                </div>
+                <p class="text-xs text-slate-400 font-medium">Listen. Understand. Validate. Recover. Coordinate. Escalate. Learn.</p>
+            </div>
+        </div>
+
+        <!-- System Health Pill -->
+        <div class="hidden md:flex items-center gap-4 text-xs font-mono">
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950 border border-slate-800">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-green"></span>
+                <span class="text-slate-300">CONTINUITY: <strong class="text-emerald-400">ACTIVE</strong></span>
+            </div>
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950 border border-slate-800">
+                <i class="fas fa-database text-cyan-400"></i>
+                <span class="text-slate-300">DURABLE STORE: <strong class="text-cyan-400">SQLite ACID</strong></span>
+            </div>
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-950 border border-slate-800">
+                <i class="fas fa-fingerprint text-purple-400"></i>
+                <span class="text-slate-300">IDEMPOTENCY: <strong class="text-purple-400">ENFORCED</strong></span>
+            </div>
+        </div>
+
+        <!-- Quick Action Triggers -->
+        <div class="flex items-center gap-2">
+            <button onclick="createNewIncident('Road Accident', 'ta')" class="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold shadow-md shadow-cyan-900/30 flex items-center gap-1.5 transition">
+                <i class="fas fa-plus"></i> New Incident
+            </button>
+            <button onclick="simulateBackendRestart()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-600/40 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition" title="Wipes volatile cache and restores from SQLite">
+                <i class="fas fa-arrows-rotate"></i> Restart Recovery
+            </button>
+        </div>
+    </header>
+
+    <!-- Emergency Voice Intake Bar -->
+    <section class="bg-slate-900/60 border-b border-slate-800/80 px-6 py-3">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center gap-3">
+            <!-- Language Selector -->
+            <div class="flex items-center gap-2 shrink-0">
+                <span class="text-xs text-slate-400 font-semibold"><i class="fas fa-language text-cyan-400 mr-1"></i> Language:</span>
+                <select id="voice-lang-select" class="bg-slate-950 border border-slate-700 text-xs text-slate-200 rounded-lg px-2.5 py-1.5 focus:border-cyan-500 outline-none">
+                    <option value="en">English (India / Global)</option>
+                    <option value="ta" selected>தமிழ் (Tamil)</option>
+                </select>
+            </div>
+
+            <!-- Waveform Canvas -->
+            <div class="w-40 h-8 shrink-0 hidden sm:block">
+                <canvas id="waveform-canvas" width="160" height="32" class="w-full h-full rounded border border-slate-800"></canvas>
+            </div>
+
+            <!-- Push to talk button -->
+            <button id="btn-record" class="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg flex items-center font-semibold text-xs transition shrink-0">
+                <i class="fas fa-microphone mr-2"></i> Push to Talk
+            </button>
+
+            <!-- Text input fallback -->
+            <div class="flex-1 w-full flex items-center gap-2">
+                <input id="voice-transcript-input" type="text" placeholder="Speak into mic or type emergency statement (e.g. அண்ணா மேம்பாலம் அருகே விபத்து...)" 
+                    class="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 rounded-lg px-3 py-2 focus:border-cyan-500 outline-none font-mono">
+                <button id="btn-submit-intake" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-cyan-800/60 rounded-lg text-xs font-bold shrink-0 transition">
+                    <i class="fas fa-paper-plane mr-1"></i> Submit Intake
+                </button>
+            </div>
+
+            <!-- Sample Utterance Chips -->
+            <div class="hidden xl:flex items-center gap-1.5 shrink-0 text-[11px]">
+                <button onclick="document.getElementById('voice-transcript-input').value = 'வணக்கம், அண்ணா மேம்பாலம் அருகே ஒரு பெரிய விபத்து. இரண்டு பேர் பலத்த காயமடைந்துள்ளனர். நான் இங்க இல்ல, என் அலுவலகத்திலிருந்து பார்க்கிறேன்.'; document.getElementById('voice-lang-select').value='ta';" 
+                    class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                    Tamil Road Accident
+                </button>
+                <button onclick="document.getElementById('voice-transcript-input').value = 'Help! Major car collision near the bridge. Two people are bleeding. I am driving past, not at the scene.'; document.getElementById('voice-lang-select').value='en';" 
+                    class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">
+                    English Crash
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Navigation Bar -->
+    <nav class="bg-slate-950/80 border-b border-slate-800 px-6 py-2">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <button data-tab="queue" class="px-4 py-2 text-sm font-semibold rounded-lg bg-cyan-600 text-white shadow-lg shadow-cyan-900/30 transition flex items-center gap-2">
+                    <i class="fas fa-list-ul"></i> Incident Queue <span id="queue-count" class="ml-1 px-1.5 py-0.2 rounded-full bg-cyan-950 border border-cyan-700 text-[10px]">0</span>
+                </button>
+                <button data-tab="detail" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition flex items-center gap-2">
+                    <i class="fas fa-radar"></i> Incident Detail & Agents
+                </button>
+                <button data-tab="demo" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition flex items-center gap-2">
+                    <i class="fas fa-play text-cyan-400"></i> 3-Min Live Demonstration
+                </button>
+                <button data-tab="scenarios" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition flex items-center gap-2">
+                    <i class="fas fa-check-double text-emerald-400"></i> 10 Test Scenarios Suite
+                </button>
+                <button data-tab="benchmarks" class="px-4 py-2 text-sm font-semibold rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition flex items-center gap-2">
+                    <i class="fas fa-chart-line text-purple-400"></i> Baseline Benchmarks
+                </button>
+            </div>
+
+            <!-- Active Incident Pill -->
+            <div class="hidden md:flex items-center gap-2 text-xs font-mono">
+                <span class="text-slate-400">Active Incident:</span>
+                <span id="detail-id" class="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-cyan-300 font-bold">INC-NONE</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Body -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-6">
+
+        <!-- ==================== TAB 1: INCIDENT QUEUE ==================== -->
+        <div id="tab-queue" class="space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-100">Central Emergency Queue</h2>
+                    <p class="text-xs text-slate-400">Real-time incident stream with connection integrity and location verification status.</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="createNewIncident('Road Accident', 'ta')" class="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg text-xs font-bold">
+                        <i class="fas fa-plus mr-1"></i> Tamil Intake
+                    </button>
+                    <button onclick="createNewIncident('Fire Hazard', 'en')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold">
+                        <i class="fas fa-plus mr-1"></i> English Intake
+                    </button>
+                </div>
+            </div>
+
+            <!-- Incidents Table -->
+            <div class="resq-card overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-900/80 text-[11px] font-mono text-slate-400 uppercase tracking-wider">
+                                <th class="py-3 px-4">Incident ID</th>
+                                <th class="py-3 px-4">Category</th>
+                                <th class="py-3 px-4">Urgency</th>
+                                <th class="py-3 px-4">Connection</th>
+                                <th class="py-3 px-4">Incident Location</th>
+                                <th class="py-3 px-4">Location Reliability</th>
+                                <th class="py-3 px-4">Lifecycle State</th>
+                                <th class="py-3 px-4">Assigned Operator</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queue-tbody" class="divide-y divide-slate-800/60 text-xs">
+                            <!-- Injected by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 2: INCIDENT DETAIL & AGENTS ==================== -->
+        <div id="tab-detail" class="hidden space-y-6">
+            <!-- Incident Header & Operational Controls -->
+            <div class="resq-card p-5 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span id="detail-category" class="text-lg font-extrabold text-white">Road Accident</span>
+                            <span id="detail-state" class="px-2.5 py-0.5 rounded text-xs font-bold bg-slate-800 border border-slate-700 text-cyan-300">RECEIVED</span>
+                            <span id="detail-conn" class="px-2.5 py-0.5 rounded text-xs font-bold badge-verified">CONNECTED</span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-1">Managed under Central Orchestration & Safety Engine with multi-agent consensus.</p>
+                    </div>
+                </div>
+
+                <!-- Operator Actions Bar -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="acknowledgeCurrentIncident()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition">
+                        <i class="fas fa-check"></i> Acknowledge
+                    </button>
+                    <button onclick="proposeAction('DISPATCH_EMS', '108 Emergency Medical Services')" class="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fas fa-ambulance"></i> Propose EMS
+                    </button>
+                    <button onclick="proposeAction('ALERT_TRAFFIC_POLICE', 'City Traffic Control')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fas fa-traffic-light"></i> Traffic Alert
+                    </button>
+                </div>
+            </div>
+
+            <!-- Failure Simulator Toolbar -->
+            <div class="p-3.5 bg-slate-950 border border-red-900/40 rounded-xl flex flex-wrap items-center justify-between gap-3 shadow-inner">
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500 pulse-red"></span>
+                    <span class="text-xs font-bold uppercase tracking-wider text-red-400 font-mono">Continuity & Failure Simulator:</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button onclick="simulateCallerDisconnect()" class="px-3 py-1 bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700 rounded text-xs font-semibold transition">
+                        <i class="fas fa-phone-slash mr-1"></i> Disconnect Caller
+                    </button>
+                    <button onclick="simulateAIFailure()" class="px-3 py-1 bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700 rounded text-xs font-semibold transition">
+                        <i class="fas fa-triangle-exclamation mr-1"></i> Simulate AI Failure
+                    </button>
+                    <button onclick="simulateBackendRestart()" class="px-3 py-1 bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-700 rounded text-xs font-semibold transition">
+                        <i class="fas fa-rotate mr-1"></i> Reboot Backend (Recovery)
+                    </button>
+                    <button onclick="triggerDuplicateActionTest()" class="px-3 py-1 bg-blue-950/80 hover:bg-blue-900 text-cyan-300 border border-cyan-700 rounded text-xs font-semibold transition">
+                        <i class="fas fa-clone mr-1"></i> Test Duplicate Idempotency
+                    </button>
+                </div>
+            </div>
+
+            <!-- Dual-Location Intelligence & Leaflet Map Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Dual-Location Comparison Card -->
+                <div class="resq-card p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-location-crosshairs text-cyan-400"></i>
+                            <h3 class="font-bold text-sm text-slate-100">Dual-Location Intelligence</h3>
+                        </div>
+                        <span id="loc-separation-badge" class="hidden px-2.5 py-0.5 rounded text-[11px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                            SEPARATION DETECTED
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Caller Location -->
+                        <div class="p-3 bg-slate-900/90 rounded-lg border border-slate-800">
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-bold text-cyan-400 font-mono">CALLER LOCATION</span>
+                                <span id="loc-caller-status" class="px-2 py-0.5 rounded text-[10px] font-bold badge-inferred">CALLER_REPORTED</span>
+                            </div>
+                            <div id="loc-caller-desc" class="text-sm font-semibold text-slate-200">Pending caller intake</div>
+                            <div class="text-[11px] text-slate-500 mt-2">Precision: <strong id="loc-caller-precision" class="text-slate-400">Approximate</strong></div>
+                        </div>
+
+                        <!-- Incident Location -->
+                        <div class="p-3 bg-slate-900/90 rounded-lg border border-slate-800">
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-bold text-red-400 font-mono">INCIDENT LOCATION</span>
+                                <span id="loc-incident-status" class="px-2 py-0.5 rounded text-[10px] font-bold badge-uncertain">UNCERTAIN</span>
+                            </div>
+                            <div id="loc-incident-desc" class="text-sm font-semibold text-slate-200">Pending incident intake</div>
+                            <div class="text-[11px] text-slate-500 mt-2">Precision: <strong id="loc-incident-precision" class="text-slate-400">Landmark / Approximate</strong></div>
+                        </div>
+                    </div>
+
+                    <!-- Adaptive Follow-Up Question Card -->
+                    <div id="follow-up-card" class="p-3.5 bg-gradient-to-r from-cyan-950/40 to-slate-900 rounded-lg border border-cyan-800/60 hidden space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                                <i class="fas fa-circle-question text-cyan-400"></i> Voice Agent Adaptive Follow-up
+                            </span>
+                            <button id="btn-speak-question" class="px-2 py-0.5 rounded bg-cyan-800 hover:bg-cyan-700 text-white text-[10px] font-semibold flex items-center gap-1">
+                                <i class="fas fa-volume-high"></i> Speak
+                            </button>
+                        </div>
+                        <p id="follow-up-text" class="text-sm font-semibold text-white italic">"Can you identify the nearest road, building, or landmark?"</p>
+                        <p id="follow-up-rationale" class="text-[11px] text-slate-400">Rationale: Target incident landmark uncertainty</p>
+                    </div>
+
+                    <!-- Interactive Map -->
+                    <div>
+                        <div id="incident-map"></div>
+                    </div>
+                </div>
+
+                <!-- Structured Fields & Information Provenance -->
+                <div class="resq-card p-5 space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-fingerprint text-purple-400"></i>
+                            <h3 class="font-bold text-sm text-slate-100">Information Provenance & Reliability</h3>
+                        </div>
+                        <span class="text-xs text-slate-400 font-mono">Confidence ≠ Verification</span>
+                    </div>
+
+                    <div id="fields-container" class="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                        <!-- Injected by JavaScript -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multi-Agent Reasoning & Coordination Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Agent 2: Incident Reasoning Agent -->
+                <div class="resq-card p-5 space-y-3">
+                    <div class="flex items-center gap-2 border-b border-slate-800 pb-3">
+                        <i class="fas fa-brain text-amber-400"></i>
+                        <h3 class="font-bold text-sm text-slate-100">Incident Reasoning Agent</h3>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <span class="text-[11px] font-bold uppercase text-slate-400 font-mono">Urgency Indicators & Explanation:</span>
+                            <p id="reasoning-urgency" class="text-xs text-slate-200 mt-1 p-2 rounded bg-slate-900 border border-slate-800"></p>
+                        </div>
+
+                        <div>
+                            <span class="text-[11px] font-bold uppercase text-slate-400 font-mono">Intake Completeness:</span>
+                            <div id="reasoning-completeness"></div>
+                        </div>
+
+                        <div>
+                            <span class="text-[11px] font-bold uppercase text-slate-400 font-mono">Missing Critical Fields:</span>
+                            <div id="reasoning-missing" class="flex flex-wrap gap-1.5 mt-1"></div>
+                        </div>
+
+                        <div>
+                            <span class="text-[11px] font-bold uppercase text-slate-400 font-mono">Contradictions Detected:</span>
+                            <div id="reasoning-contradictions" class="mt-1 space-y-1"></div>
+                        </div>
+
+                        <div>
+                            <span class="text-[11px] font-bold uppercase text-slate-400 font-mono">Operator Recommendations:</span>
+                            <ul id="reasoning-recs" class="list-disc list-inside mt-1 space-y-1"></ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Agent 3: Coordination Agent Actions -->
+                <div class="resq-card p-5 space-y-3">
+                    <div class="flex items-center gap-2 border-b border-slate-800 pb-3">
+                        <i class="fas fa-network-wired text-cyan-400"></i>
+                        <h3 class="font-bold text-sm text-slate-100">Coordination & Idempotency Agent</h3>
+                    </div>
+
+                    <div class="text-xs text-slate-400">
+                        Tracks granular workflow: <strong class="text-slate-300">Created → Sent → ACK → Assigned</strong>.
+                        Guarantees exactly-once dispatch using cryptographic idempotency keys.
+                    </div>
+
+                    <div id="coordination-actions-list" class="space-y-2.5 max-h-[340px] overflow-y-auto">
+                        <!-- Injected by JavaScript -->
+                    </div>
+                </div>
+
+                <!-- Auditable Timeline & Event Stream -->
+                <div class="resq-card p-5 space-y-3">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-clock-rotate-left text-emerald-400"></i>
+                            <h3 class="font-bold text-sm text-slate-100">Auditable Event Timeline</h3>
+                        </div>
+                        <span class="text-[10px] font-mono text-emerald-400">IMMUTABLE</span>
+                    </div>
+
+                    <div id="timeline-container" class="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+                        <!-- Injected by JavaScript -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 3: 3-MINUTE DEMONSTRATION PLAN ==================== -->
+        <div id="tab-demo" class="hidden space-y-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-bold text-white">Three-Minute Live Demonstration Plan</h2>
+                    <p class="text-xs text-slate-400">Section 15 Specification Walkthrough: Fragmented Tamil intake → Location split → Interruption → Continuity → Idempotent Recovery.</p>
+                </div>
+                <button id="btn-auto-demo" onclick="startAutoDemo()" class="px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-cyan-900/30 flex items-center gap-2 transition">
+                    <i class="fas fa-play"></i> Auto-Play Entire 3-Min Sequence
+                </button>
+            </div>
+
+            <div id="demo-steps-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Injected by JavaScript -->
+            </div>
+        </div>
+
+        <!-- ==================== TAB 4: 10 TEST SCENARIOS SUITE ==================== -->
+        <div id="tab-scenarios" class="hidden space-y-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-lg font-bold text-white">10 Required Test Scenarios Verification Suite</h2>
+                    <p class="text-xs text-slate-400">Verifies resilience across disconnections, restart recovery, idempotency deduplication, and bilingual extraction.</p>
+                </div>
+                <button id="btn-run-all-scenarios" onclick="runAllTestScenarios()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-emerald-900/30 flex items-center gap-2 transition">
+                    <i class="fas fa-check-double"></i> Run All 10 Test Scenarios
+                </button>
+            </div>
+
+            <div id="scenarios-summary"></div>
+
+            <div id="scenarios-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Injected by JavaScript -->
+            </div>
+        </div>
+
+        <!-- ==================== TAB 5: EVALUATION & BASELINE MATRIX ==================== -->
+        <div id="tab-benchmarks" class="hidden space-y-6">
+            <div>
+                <h2 class="text-lg font-bold text-white">Baseline Comparison & Evaluation Metrics</h2>
+                <p class="text-xs text-slate-400">Quantitative evaluation comparing Baseline A (Traditional Structured Intake), Baseline B (Single-Agent AI), and RESQ 4.0.</p>
+            </div>
+
+            <!-- Quantitative Targets vs Measured Table -->
+            <div class="resq-card overflow-hidden">
+                <div class="p-4 border-b border-slate-800 bg-slate-900/80">
+                    <h3 class="text-sm font-bold text-slate-200">Engineering Targets vs Measured Platform Performance</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-900/40 text-[11px] font-mono text-slate-400 uppercase">
+                                <th class="py-3 px-4">Evaluation Metric</th>
+                                <th class="py-3 px-4">Target</th>
+                                <th class="py-3 px-4">Baseline A (Traditional)</th>
+                                <th class="py-3 px-4">Baseline B (Single-Agent)</th>
+                                <th class="py-3 px-4">RESQ 4.0 (Multi-Agent)</th>
+                                <th class="py-3 px-4">Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="benchmarks-tbody" class="divide-y divide-slate-800/60">
+                            <!-- Injected by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Architectural Feature Matrix -->
+            <div class="resq-card overflow-hidden">
+                <div class="p-4 border-b border-slate-800 bg-slate-900/80">
+                    <h3 class="text-sm font-bold text-slate-200">Architectural Paradigm & Resilience Comparison</h3>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 bg-slate-900/40 text-[11px] font-mono text-slate-400 uppercase">
+                                <th class="py-3 px-4">Architectural Feature</th>
+                                <th class="py-3 px-4">Baseline A (Traditional)</th>
+                                <th class="py-3 px-4">Baseline B (Single-Agent)</th>
+                                <th class="py-3 px-4">RESQ 4.0 Platform</th>
+                            </tr>
+                        </thead>
+                        <tbody id="features-tbody" class="divide-y divide-slate-800/60">
+                            <!-- Injected by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/80 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500 font-mono">
+        RESQ 4.0 Prototype • "Built for emergencies where communication may fail, technology may fail, and the incident still matters."
+    </footer>
+
+    <!-- App JavaScript Modules -->
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/map.js"></script>
+    <script src="/static/js/voice_recorder.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
